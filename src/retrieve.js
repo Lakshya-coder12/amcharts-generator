@@ -34,6 +34,19 @@ export async function retrieveContext(chartType, query, topK = 20) {
     const embeddingLiteral = `[${qvec.join(',')}]`;
     const tsq = buildTsQuery(query);
 
+    const examplesSql = `
+      SELECT chart_type, key, config,
+        (1 - (embedding <-> $1::vector)) AS vec_sim
+      FROM config_examples
+      WHERE chart_type = $2
+      ORDER BY vec_sim DESC
+      LIMIT 10;
+    `;
+    const examplesParams = [embeddingLiteral, chartType];
+    const { rows: exampleRows } = await client.query(examplesSql, examplesParams);
+    console.log(`Fetched ${exampleRows.length} examples for ${chartType}`);
+
+    let searchRows = [];
     // If the query is a single, specific term, perform a direct lookup.
     if (query.split(/\s+/).length === 1) {
       const directLookupSql = `
@@ -45,34 +58,34 @@ export async function retrieveContext(chartType, query, topK = 20) {
       const directLookupParams = [chartType, query];
       const { rows: directRows } = await client.query(directLookupSql, directLookupParams);
       if (directRows.length > 0) {
-        return directRows;
+        searchRows = directRows;
       }
     }
 
-    const sql = `
-      SELECT id, chart_type, owner_class, key, kind, description, doc_url,
-        (1 - (embedding <-> $1::vector)) AS vec_sim,
-        ts_rank_cd(text_tsvector, to_tsquery('simple', $2)) AS lex_rank
-      FROM fields
-      WHERE chart_type = $3
-      ORDER BY (0.7 * (1 - (embedding <-> $1::vector)) + 0.3 * ts_rank_cd(text_tsvector, to_tsquery('simple', $2))) DESC
-      LIMIT $4;
-    `;
-    const params = [embeddingLiteral, tsq, chartType, topK];
-    const { rows } = await client.query(sql, params);
+    if (searchRows.length === 0) {
+        const sql = `
+        SELECT id, chart_type, owner_class, key, kind, description, doc_url,
+            (1 - (embedding <-> $1::vector)) AS vec_sim,
+            ts_rank_cd(text_tsvector, to_tsquery('simple', $2)) AS lex_rank
+        FROM fields
+        WHERE chart_type = $3
+        ORDER BY (0.7 * (1 - (embedding <-> $1::vector)) + 0.3 * ts_rank_cd(text_tsvector, to_tsquery('simple', $2))) DESC
+        LIMIT $4;
+        `;
+        const params = [embeddingLiteral, tsq, chartType, topK];
+        const { rows } = await client.query(sql, params);
+        searchRows = rows;
+    }
 
-    const examplesSql = `
-      SELECT chart_type, key, config,
-        (1 - (embedding <-> $1::vector)) AS vec_sim
-      FROM config_examples
-      WHERE chart_type = $2
-      ORDER BY vec_sim DESC
-      LIMIT 10;
-    `;
-    const examplesParams = [embeddingLiteral, chartType];
-    const { rows: exampleRows } = await client.query(examplesSql, examplesParams);
+    const cleanedRows = searchRows.map(row => {
+        if (row.description) {
+            row.description = row.description.replace(/`https?:\/\/[^`]+`\s*(for more info)?/g, '').replace(/https?:\/\/\S+/g, '').trim();
+        }
+        delete row.doc_url; // remove doc_url to avoid including it in the context
+        return row;
+    });
 
-    return { fields: rows, examples: exampleRows };
+    return { fields: cleanedRows, examples: exampleRows };
   } finally {
     await client.end();
   }

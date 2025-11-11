@@ -118,8 +118,13 @@ async function insertRecord(client, rec, embedding) {
 async function ingestChart(chartType) {
   const settingsPath = path.resolve(__dirname, `../output/${chartType}.settings.json`);
   const propertiesPath = path.resolve(__dirname, `../output/${chartType}.properties.json`);
+  // If output files are missing, skip fields ingestion instead of failing.
   if (!fs.existsSync(settingsPath) || !fs.existsSync(propertiesPath)) {
-    throw new Error(`Missing output files for ${chartType}. Run npm run scrape:${chartType.includes('xy') ? 'xy' : chartType}`);
+    console.warn(
+      `Skipping fields ingestion: missing output files for ${chartType}. ` +
+      `Expected: ${settingsPath} and ${propertiesPath}.`
+    );
+    return; // Continue with config examples ingestion
   }
   const settingsMap = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   const propertiesMap = JSON.parse(fs.readFileSync(propertiesPath, 'utf8'));
@@ -150,28 +155,26 @@ async function ingestConfigExamples() {
   const client = getClient();
   await client.connect();
   try {
-    for (const example of Object.values(examples)) {
-      for (const [key, config] of Object.entries(example)) {
-        if (key === 'type') continue;
-        const embText = `${example.type} ${key} ${JSON.stringify(config)}`;
-        let emb;
-        try {
-          emb = await embedText(embText);
-        } catch (e) {
-          console.warn(`Embedding failed for example ${example.type}.${key}: ${e.message}`);
-          emb = null;
-        }
-        const embeddingLiteral = toEmbeddingLiteral(emb ?? Array(768).fill(0));
-        const sql = `
-          INSERT INTO config_examples (chart_type, key, config, embedding)
-          VALUES ($1, $2, $3, $4::vector)
-          ON CONFLICT (chart_type, key) DO UPDATE SET
-            config = EXCLUDED.config,
-            embedding = EXCLUDED.embedding;
-        `;
-        const params = [example.type, key, JSON.stringify(config), embeddingLiteral];
-        await client.query(sql, params);
+    for (const [exampleName, exampleConfig] of Object.entries(examples)) {
+      const chartType = exampleConfig.type.toLowerCase();
+      const embText = `${chartType} ${exampleName} ${JSON.stringify(exampleConfig)}`;
+      let emb;
+      try {
+        emb = await embedText(embText);
+      } catch (e) {
+        console.warn(`Embedding failed for example ${exampleName}: ${e.message}`);
+        emb = null;
       }
+      const embeddingLiteral = toEmbeddingLiteral(emb ?? Array(768).fill(0));
+      const sql = `
+        INSERT INTO config_examples (chart_type, key, config, embedding)
+        VALUES ($1, $2, $3, $4::vector)
+        ON CONFLICT (chart_type, key) DO UPDATE SET
+          config = EXCLUDED.config,
+          embedding = EXCLUDED.embedding;
+      `;
+      const params = [chartType, exampleName, JSON.stringify(exampleConfig), embeddingLiteral];
+      await client.query(sql, params);
     }
   } finally {
     await client.end();

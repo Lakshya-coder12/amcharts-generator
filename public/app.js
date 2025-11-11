@@ -1,7 +1,7 @@
 async function loadConfig() {
   const statusEl = document.getElementById('status');
   try {
-    const res = await fetch('http://localhost:3000/config');
+    const res = await fetch('/config');
     if (!res.ok) {
       const txt = await res.text();
       statusEl.textContent = `No config found (HTTP ${res.status}).\n${txt}`;
@@ -17,15 +17,22 @@ async function loadConfig() {
 }
 
 am5.ready(async function () {
+  const statusEl = document.getElementById('status');
   const config = await loadConfig();
   if (!config) return;
+
   const root = am5.Root.new('chartdiv');
   root.setThemes([am5themes_Animated.new(root)]);
+
+  // Optional: set date formatter fields if config uses DateAxis
   try {
-    const jsonParser = am5plugins_json.Json.new(root);
-    jsonParser.parse(config);
+    root.dateFormatter.setAll({ dateFields: ['valueX'] });
+  } catch (_) {}
+
+  try {
+    const parser = am5plugins_json.JsonParser.new(root);
+    await parser.parse(config, { parent: root.container });
   } catch (e) {
-    const statusEl = document.getElementById('status');
     statusEl.textContent += '\nRender error: ' + e.message;
   }
 });

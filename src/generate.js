@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
-const OLLAMA_CHAT_MODEL = 'llama3-custom';
+const OLLAMA_CHAT_MODEL = 'qwen-custom';
 console.log(`Using Ollama model: ${OLLAMA_CHAT_MODEL}`);
 const ollamaClient = new Ollama({ host: OLLAMA_HOST });
 
@@ -59,8 +59,7 @@ export async function generateConfig(chartType, userQuery, topK = 20) {
     messages.push({ role: 'user', content: `Relevant config examples:\n${exampleConfigs}` });
   }
 
-
-
+  console.log(JSON.stringify(messages, null, 2));
   const content = await ollamaChat(messages);
   let parsed;
   try {
@@ -74,12 +73,18 @@ export async function generateConfig(chartType, userQuery, topK = 20) {
     throw new Error(`Model output failed Zod validation: ${validation.error.message}\n${content}`);
   }
 
-  // Write preview artifact for the browser demo
-  const outPath = path.resolve(__dirname, `../output/preview.json`);
+  // Write artifacts for the browser demo
+  const previewOutPath = path.resolve(__dirname, `../output/preview.json`);
+  const generatedOutPath = path.resolve(__dirname, `../output/generated.${chartType}.json`);
   try {
-    fs.writeFileSync(outPath, JSON.stringify(validation.data, null, 2));
+    fs.writeFileSync(previewOutPath, JSON.stringify(validation.data, null, 2));
   } catch (e) {
-    console.warn(`Failed to write preview file: ${outPath} - ${e.message}`);
+    console.warn(`Failed to write preview file: ${previewOutPath} - ${e.message}`);
+  }
+  try {
+    fs.writeFileSync(generatedOutPath, JSON.stringify(validation.data, null, 2));
+  } catch (e) {
+    console.warn(`Failed to write generated file: ${generatedOutPath} - ${e.message}`);
   }
   return { config: validation.data, citations: { fields, examples } };
 }
