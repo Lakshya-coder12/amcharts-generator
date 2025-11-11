@@ -28,3 +28,13 @@ export async function migrate() {
     await client.end();
   }
 }
+
+export async function drop() {
+  const client = getClient();
+  await client.connect();
+  try {
+    await client.query('DROP TABLE IF EXISTS config_examples;');
+  } finally {
+    await client.end();
+  }
+}

@@ -2,8 +2,9 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getClient, migrate } from './db.js';
+import { getClient, migrate, drop } from './db.js';
 import { Ollama } from 'ollama';
+import * as examples from './examples.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -124,17 +125,15 @@ async function ingestChart(chartType) {
   const propertiesMap = JSON.parse(fs.readFileSync(propertiesPath, 'utf8'));
   const records = buildRecords(chartType, settingsMap, propertiesMap);
 
-  await migrate();
   const client = getClient();
   await client.connect();
   try {
     for (const rec of records) {
-      const embText = `${rec.chart_type} ${rec.owner_class} ${rec.key} ${rec.kind} ${rec.description ?? ''}`;
+      const embText = `${rec.chart_type} ${rec.owner_class} ${rec.key} ${rec.description}`;
       let emb;
       try {
         emb = await embedText(embText);
       } catch (e) {
-        // If embedding fails, insert with null embedding but keep lexical index
         console.warn(`Embedding failed for ${rec.key}: ${e.message}`);
         emb = null;
       }
@@ -145,10 +144,45 @@ async function ingestChart(chartType) {
   }
 }
 
+async function ingestConfigExamples() {
+  await drop();
+  await migrate();
+  const client = getClient();
+  await client.connect();
+  try {
+    for (const example of Object.values(examples)) {
+      for (const [key, config] of Object.entries(example)) {
+        if (key === 'type') continue;
+        const embText = `${example.type} ${key} ${JSON.stringify(config)}`;
+        let emb;
+        try {
+          emb = await embedText(embText);
+        } catch (e) {
+          console.warn(`Embedding failed for example ${example.type}.${key}: ${e.message}`);
+          emb = null;
+        }
+        const embeddingLiteral = toEmbeddingLiteral(emb ?? Array(768).fill(0));
+        const sql = `
+          INSERT INTO config_examples (chart_type, key, config, embedding)
+          VALUES ($1, $2, $3, $4::vector)
+          ON CONFLICT (chart_type, key) DO UPDATE SET
+            config = EXCLUDED.config,
+            embedding = EXCLUDED.embedding;
+        `;
+        const params = [example.type, key, JSON.stringify(config), embeddingLiteral];
+        await client.query(sql, params);
+      }
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 const chartTypeArg = process.argv[2] || 'xychart';
-ingestChart(chartTypeArg)
+Promise.all([ingestChart(chartTypeArg), ingestConfigExamples()])
   .then(() => {
     console.log(`Ingested records for ${chartTypeArg} into Postgres.`);
+    console.log('Ingested config examples into Postgres.');
   })
   .catch((err) => {
     console.error(err);

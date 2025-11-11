@@ -60,7 +60,19 @@ export async function retrieveContext(chartType, query, topK = 20) {
     `;
     const params = [embeddingLiteral, tsq, chartType, topK];
     const { rows } = await client.query(sql, params);
-    return rows;
+
+    const examplesSql = `
+      SELECT chart_type, key, config,
+        (1 - (embedding <-> $1::vector)) AS vec_sim
+      FROM config_examples
+      WHERE chart_type = $2
+      ORDER BY vec_sim DESC
+      LIMIT 10;
+    `;
+    const examplesParams = [embeddingLiteral, chartType];
+    const { rows: exampleRows } = await client.query(examplesSql, examplesParams);
+
+    return { fields: rows, examples: exampleRows };
   } finally {
     await client.end();
   }
