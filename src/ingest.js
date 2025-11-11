@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getClient, migrate, drop } from './db.js';
 import { Ollama } from 'ollama';
-import * as examples from './examples.js';
+import { chartExamples } from './examples.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -155,14 +155,24 @@ async function ingestConfigExamples() {
   const client = getClient();
   await client.connect();
   try {
-    for (const [exampleName, exampleConfig] of Object.entries(examples)) {
-      const chartType = exampleConfig.type.toLowerCase();
-      const embText = `${chartType} ${exampleName} ${JSON.stringify(exampleConfig)}`;
+    const slugify = (text) =>
+      (text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .trim()
+        .replace(/\s+/g, '-')
+        .slice(0, 48);
+
+    for (let i = 0; i < chartExamples.length; i++) {
+      const ex = chartExamples[i];
+      const chartType = (ex?.config?.type || 'XYChart').toLowerCase();
+      const key = `ex-${String(i + 1).padStart(3, '0')}-${slugify(ex?.query)}`;
+      const embText = `${chartType} ${ex?.query || ''} ${JSON.stringify(ex?.config || {})}`;
       let emb;
       try {
         emb = await embedText(embText);
       } catch (e) {
-        console.warn(`Embedding failed for example ${exampleName}: ${e.message}`);
+        console.warn(`Embedding failed for example ${key}: ${e.message}`);
         emb = null;
       }
       const embeddingLiteral = toEmbeddingLiteral(emb ?? Array(768).fill(0));
@@ -173,9 +183,12 @@ async function ingestConfigExamples() {
           config = EXCLUDED.config,
           embedding = EXCLUDED.embedding;
       `;
-      const params = [chartType, exampleName, JSON.stringify(exampleConfig), embeddingLiteral];
+      const params = [chartType, key, JSON.stringify(ex.config), embeddingLiteral];
       await client.query(sql, params);
     }
+
+    const { rows } = await client.query('SELECT COUNT(*)::int AS count FROM config_examples;');
+    console.log(`config_examples row count: ${rows?.[0]?.count ?? 0}`);
   } finally {
     await client.end();
   }

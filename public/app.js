@@ -24,10 +24,7 @@ am5.ready(async function () {
   const root = am5.Root.new('chartdiv');
   root.setThemes([am5themes_Animated.new(root)]);
 
-  // Optional: set date formatter fields if config uses DateAxis
-  try {
-    root.dateFormatter.setAll({ dateFields: ['valueX'] });
-  } catch (_) {}
+  root.dateFormatter.setAll({ dateFields: ['valueX'] });
 
   try {
     const parser = am5plugins_json.JsonParser.new(root);

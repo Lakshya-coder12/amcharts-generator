@@ -16,18 +16,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function ollamaChat(messages) {
-  try {
-    const jsonSchema = zodToJsonSchema(amchartsXYChartSchema);
-    const data = await ollamaClient.chat({
-      model: OLLAMA_CHAT_MODEL,
-      messages,
-      stream: false,
-      format: jsonSchema,
-    });
-    return data?.message?.content;
-  } catch (err) {
-    throw new Error(`Chat request failed: ${err}`);
-  }
+  const jsonSchema = zodToJsonSchema(amchartsXYChartSchema);
+  const data = await ollamaClient.chat({
+    model: OLLAMA_CHAT_MODEL,
+    messages,
+    stream: false,
+    format: jsonSchema,
+  });
+  return data?.message?.content;
 }
 
 function contextToText(fields, examples) {
@@ -68,6 +64,30 @@ export async function generateConfig(chartType, userQuery, topK = 20) {
     throw new Error(`Model output is not valid JSON: ${e.message}\n${content}`);
   }
 
+  // Normalize references to use '#'-prefixed tokens if the model omitted them
+  try {
+    if (parsed?.properties) {
+      if (Array.isArray(parsed.properties.xAxes)) {
+        parsed.properties.xAxes = parsed.properties.xAxes.map((x) => (typeof x === 'string' && !x.startsWith('#') ? `#${x}` : x));
+      }
+      if (Array.isArray(parsed.properties.yAxes)) {
+        parsed.properties.yAxes = parsed.properties.yAxes.map((y) => (typeof y === 'string' && !y.startsWith('#') ? `#${y}` : y));
+      }
+      if (Array.isArray(parsed.properties.series)) {
+        parsed.properties.series = parsed.properties.series.map((s) => {
+          if (s?.settings) {
+            if (typeof s.settings.xAxis === 'string' && !s.settings.xAxis.startsWith('#')) s.settings.xAxis = `#${s.settings.xAxis}`;
+            if (typeof s.settings.yAxis === 'string' && !s.settings.yAxis.startsWith('#')) s.settings.yAxis = `#${s.settings.yAxis}`;
+          }
+          if (s?.properties && typeof s.properties.data === 'string' && !s.properties.data.startsWith('#')) {
+            s.properties.data = `#${s.properties.data}`;
+          }
+          return s;
+        });
+      }
+    }
+  } catch {}
+
   const validation = amchartsXYChartSchema.safeParse(parsed);
   if (!validation.success) {
     throw new Error(`Model output failed Zod validation: ${validation.error.message}\n${content}`);
@@ -91,7 +111,8 @@ export async function generateConfig(chartType, userQuery, topK = 20) {
 
 // CLI entry
 const chartTypeArg = process.argv[2] || 'xychart';
-const queryArg = process.argv.slice(3).join(' ') || 'A complete XY chart with a category X-axis, a value Y-axis, a column series, and some data.';
+const queryArg = process.argv.slice(3).join(' ') || 'Create a line chart showing daily website traffic over 7 days starting from January 1, 2024.'
+'The traffic ranges from 5000 to 15000 visitors per day with realistic daily variations.';
 
 generateConfig(chartTypeArg, queryArg)
   .then(({ config }) => {

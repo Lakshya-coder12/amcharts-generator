@@ -33,6 +33,7 @@ export async function retrieveContext(chartType, query, topK = 20) {
     const qvec = await embedText(query);
     const embeddingLiteral = `[${qvec.join(',')}]`;
     const tsq = buildTsQuery(query);
+    const chartTypeNorm = (chartType || '').toLowerCase();
 
     const examplesSql = `
       SELECT chart_type, key, config,
@@ -42,9 +43,9 @@ export async function retrieveContext(chartType, query, topK = 20) {
       ORDER BY vec_sim DESC
       LIMIT 10;
     `;
-    const examplesParams = [embeddingLiteral, chartType];
+    const examplesParams = [embeddingLiteral, chartTypeNorm];
     const { rows: exampleRows } = await client.query(examplesSql, examplesParams);
-    console.log(`Fetched ${exampleRows.length} examples for ${chartType}`);
+    console.log(`Fetched ${exampleRows.length} examples for ${chartTypeNorm}`);
 
     let searchRows = [];
     // If the query is a single, specific term, perform a direct lookup.
@@ -55,7 +56,7 @@ export async function retrieveContext(chartType, query, topK = 20) {
         WHERE chart_type = $1 AND key = $2
         LIMIT 1;
       `;
-      const directLookupParams = [chartType, query];
+      const directLookupParams = [chartTypeNorm, query];
       const { rows: directRows } = await client.query(directLookupSql, directLookupParams);
       if (directRows.length > 0) {
         searchRows = directRows;
@@ -72,7 +73,7 @@ export async function retrieveContext(chartType, query, topK = 20) {
         ORDER BY (0.7 * (1 - (embedding <-> $1::vector)) + 0.3 * ts_rank_cd(text_tsvector, to_tsquery('simple', $2))) DESC
         LIMIT $4;
         `;
-        const params = [embeddingLiteral, tsq, chartType, topK];
+        const params = [embeddingLiteral, tsq, chartTypeNorm, topK];
         const { rows } = await client.query(sql, params);
         searchRows = rows;
     }
